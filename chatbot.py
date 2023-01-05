@@ -17,6 +17,13 @@ mic = sr.Microphone(device_index=2)
 rec = sr.Recognizer()
 LEDS = adafruit_dotstar.DotStar(board.D6, board.D5, 3, brightness=0.2, pixel_order='PRBG', auto_write=False)
 
+def LEDS_reset():
+    for LED in range(3):
+        LEDS[LED] = (0, 0, 0)
+    LEDS.show()
+
+LEDS_reset()
+
 def button_init():
     button = DigitalInOut(board.D17)
     button.direction = Direction.INPUT
@@ -42,20 +49,28 @@ def speech_output(phrase):
     os.system("mpg123 -qf 6000 " + path)
     return 0
 
-def user_input():
-    query = None
+def user_input(recognizer, audio):
     try:
-        with mic as source:
-            print("listening...")
+        if rec.recognize_google(audio) == "computer":
             for LED in range(3):
                 LEDS[LED] = (0, 255, 0)
             LEDS.show()
-            rec.adjust_for_ambient_noise(source, duration=0.5)
-            query = rec.listen(source)    
-        return rec.recognize_google(query) 
+            print("listening...")
+            try:
+                query = rec.recognize_google(rec.listen(mic))
+            except sr.UnknownValueError:
+                speech_output("I didn't quite catch that")
+                sys.exit()
+            LEDS_reset()
+            stop = False
+            t_AI = Thread(target=compute_response, args=(query,))
+            t_AI.start()
+            t_LED = Thread(target=LEDS_flash, args=(t_AI.is_alive(), lambda: stop))
+            t_LED.start()
+            t_AI.join()
+            stop = True
     except sr.UnknownValueError:
-        speech_output("I didn't catch that")
-        sys.exit()
+        pass
 
 def compute_response(input_text):
     completion = ai.Completion.create(
@@ -71,23 +86,12 @@ def compute_response(input_text):
     speech_output(response) 
 
 def main():
-    button = button_init()
+    with mic as source:
+        rec.adjust_for_ambient_noise(source)
 
+    rec.listen_in_background(mic, user_input)
     while True:
-        if button.value:
-            continue
-        else:
-            input_text = user_input()
-            for LED in range(3):
-                LEDS[LED] = (0, 0, 0)
-            LEDS.show()
-            stop = False
-            t_AI = Thread(target=compute_response, args=(input_text,))
-            t_AI.start()
-            t_LED = Thread(target=LEDS_flash, args=(t_AI.is_alive(), lambda: stop))
-            t_LED.start()
-            t_AI.join()
-            stop = True
+        time.sleep(0.01)
 
 if __name__ == '__main__':
     main()
