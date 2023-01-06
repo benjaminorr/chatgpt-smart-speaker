@@ -9,9 +9,11 @@ import sys
 import time
 from threading import Thread
 
-ai.api_key = os.getenv("OPENAI_API_KEY")
+OFF = (0, 0, 0)
+WHITE = (255, 255, 255)
+GREEN = (0, 255, 0)
 
-model_engine = "text-davinci-003"
+ai.api_key = os.getenv("OPENAI_API_KEY")
 
 mic = sr.Microphone(device_index=2)   
 rec = sr.Recognizer()
@@ -23,15 +25,37 @@ def button_init():
     button.pull = Pull.UP
     return button
 
-def LEDS_flash(compute_flag, stop):
-    while compute_flag:
+def LEDS_set(color):
+    for LED in range(3):
+        LEDS[LED] = color
+    LEDS.show()
+
+def LEDS_rotate(recognition_flag, stop):
+    while recognition_flag:
         for LED in range(3):
-            LEDS[LED] = (255, 255, 255)
+            LEDS[LED] = WHITE
             LEDS.show()
             time.sleep(0.23)
-            LEDS[LED] = (0, 0, 0)
+            LEDS[LED] = OFF
             LEDS.show()
             time.sleep(0.001)
+        if stop():
+            break
+
+def LEDS_flash(compute_flag, stop):
+    while compute_flag:
+        LEDS[0] = LEDS[2] = WHITE
+        LEDS.show()
+        time.sleep(0.4)
+        LEDS[0] = LEDS[2] = OFF
+        LEDS.show()
+        time.sleep(0.001)
+        LEDS[1] = WHITE
+        LEDS.show()
+        time.sleep(0.4)
+        LEDS[1] = OFF
+        LEDS.show()
+        time.sleep(0.001)
         if stop():
             break
 
@@ -40,54 +64,62 @@ def speech_output(phrase):
     path = "response.mp3"
     speech.save(path)
     os.system("mpg123 -qf 6000 " + path)
-    return 0
 
-def user_input():
-    query = None
-    try:
+def get_user_input():
         with mic as source:
-            print("listening...")
-            for LED in range(3):
-                LEDS[LED] = (0, 255, 0)
-            LEDS.show()
             rec.adjust_for_ambient_noise(source, duration=0.5)
+            print("listening...")
+            LEDS_set(GREEN)
             query = rec.listen(source)    
-        return rec.recognize_google(query) 
+            LEDS_set(OFF)
+            return query
+
+def recognize_input(audio, response):
+    try:
+        text = rec.recognize_google(audio)
     except sr.UnknownValueError:
         speech_output("I didn't catch that")
         sys.exit()
+    compute_response(text, response)
 
-def compute_response(input_text):
+def compute_response(input_text, response):
     completion = ai.Completion.create(
-        engine=model_engine,
+        engine="text-davinci-003",
         prompt=input_text,
         max_tokens=1024,
         temperature=0.8,
         frequency_penalty=2.0,
     )
-    response = completion.choices[0].text
-
-    print(response)
-    speech_output(response) 
+    response[0] = completion.choices[0].text
 
 def main():
     button = button_init()
+    LEDS_set(OFF)
 
     while True:
         if button.value:
             continue
         else:
-            input_text = user_input()
-            for LED in range(3):
-                LEDS[LED] = (0, 0, 0)
-            LEDS.show()
-            stop = False
-            t_AI = Thread(target=compute_response, args=(input_text,))
-            t_AI.start()
-            t_LED = Thread(target=LEDS_flash, args=(t_AI.is_alive(), lambda: stop))
-            t_LED.start()
-            t_AI.join()
-            stop = True
+            input_audio = get_user_input()
+
+            # threads: input/compute & LED rotate pattern
+            response = [None]*1 
+            stop_rotate = False
+            t_rec = Thread(target=recognize_input, args=(input_audio, response,))
+            t_rec.start()
+            t_LED_rotate = Thread(target=LEDS_rotate, args=(t_rec.is_alive(), lambda: stop_rotate,))
+            t_LED_rotate.start()
+            t_rec.join()
+            stop_rotate = True
+          
+            # threads: speak output & LED flash pattern
+            stop_flash = False
+            t_speak = Thread(target=speech_output, args=(response[0],))
+            t_speak.start()
+            t_LED_flash = Thread(target=LEDS_flash, args=(t_speak.is_alive(), lambda: stop_flash,))
+            t_LED_flash.start()
+            t_speak.join()
+            stop_flash = True
 
 if __name__ == '__main__':
     main()
