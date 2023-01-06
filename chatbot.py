@@ -9,20 +9,15 @@ import sys
 import time
 from threading import Thread
 
-ai.api_key = os.getenv("OPENAI_API_KEY")
+OFF = (0, 0, 0)
+WHITE = (255, 255, 255)
+GREEN = (0, 255, 0)
 
-model_engine = "text-davinci-003"
+ai.api_key = os.getenv("OPENAI_API_KEY")
 
 mic = sr.Microphone(device_index=2)   
 rec = sr.Recognizer()
 LEDS = adafruit_dotstar.DotStar(board.D6, board.D5, 3, brightness=0.2, pixel_order='PRBG', auto_write=False)
-
-def LEDS_reset():
-    for LED in range(3):
-        LEDS[LED] = (0, 0, 0)
-    LEDS.show()
-
-LEDS_reset()
 
 def button_init():
     button = DigitalInOut(board.D17)
@@ -30,13 +25,18 @@ def button_init():
     button.pull = Pull.UP
     return button
 
-def LEDS_flash(compute_flag, stop):
+def LEDS_set(color):
+    for LED in range(3):
+        LEDS[LED] = color
+    LEDS.show()
+
+def LEDS_rotate(compute_flag, stop):
     while compute_flag:
         for LED in range(3):
-            LEDS[LED] = (255, 255, 255)
+            LEDS[LED] = WHITE
             LEDS.show()
             time.sleep(0.23)
-            LEDS[LED] = (0, 0, 0)
+            LEDS[LED] = OFF
             LEDS.show()
             time.sleep(0.001)
         if stop():
@@ -53,7 +53,7 @@ def user_input(recognizer, audio):
     try:
         if rec.recognize_google(audio) == "computer":
             for LED in range(3):
-                LEDS[LED] = (0, 255, 0)
+                LEDS[LED] = GREEN
             LEDS.show()
             print("listening...")
             try:
@@ -65,7 +65,7 @@ def user_input(recognizer, audio):
             stop = False
             t_AI = Thread(target=compute_response, args=(query,))
             t_AI.start()
-            t_LED = Thread(target=LEDS_flash, args=(t_AI.is_alive(), lambda: stop))
+            t_LED = Thread(target=LEDS_rotate, args=(t_AI.is_alive(), lambda: stop))
             t_LED.start()
             t_AI.join()
             stop = True
@@ -74,7 +74,7 @@ def user_input(recognizer, audio):
 
 def compute_response(input_text):
     completion = ai.Completion.create(
-        engine=model_engine,
+        engine="text-davinci-003",
         prompt=input_text,
         max_tokens=1024,
         temperature=0.8,
@@ -86,6 +86,8 @@ def compute_response(input_text):
     speech_output(response) 
 
 def main():
+    LEDS_set(OFF)
+
     with mic as source:
         rec.adjust_for_ambient_noise(source)
 
